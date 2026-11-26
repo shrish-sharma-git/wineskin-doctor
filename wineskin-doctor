@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""
+Wineskin Controller Doctor — CLI entry point.
+
+Diagnose and repair controller issues in Wineskin game wrappers on macOS.
+
+Usage:
+    wineskin-doctor scan
+    wineskin-doctor diagnose <wrapper.app>
+    wineskin-doctor repair <wrapper.app>
+    wineskin-doctor rollback <wrapper.app>
+    wineskin-doctor status
+"""
+
+import sys
+import os
+
+# Allow running from any directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
+
+from doctor.cli import main
+
+if __name__ == "__main__":
+    main()
