@@ -1,1 +1,3 @@
-# Wineskin Controller Doctor — package marker
+"""Wineskin Controller Doctor package."""
+
+__version__ = "1.0.0"

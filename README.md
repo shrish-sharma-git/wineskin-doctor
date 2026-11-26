@@ -1,175 +1,124 @@
 # Wineskin Controller Doctor
 
-A macOS command-line utility that diagnoses and repairs controller issues in Wineskin game wrappers running Windows games through Wine on Apple Silicon.
+A lightweight macOS command-line utility that diagnoses and safely repairs controller detection and XInput passthrough issues in **Wineskin / Sikarugir** game wrappers on Apple Silicon (and Intel) Macs.
 
-## The Problem
+## Why This Exists
 
-When running Windows games through Wineskin/Wine on macOS, controllers often don't work because:
-- The bundled SDL2 library is missing, empty, or has the wrong CPU architecture
-- Wine's controller bus driver (winebus) cannot initialise without SDL2
-- XInput devices are never exposed to the game
-- Registry settings may disable controller backends
+When running Windows games through Wineskin/Wine on macOS, controllers often fail silently because:
+- The bundled `libSDL2-2.0.0.dylib` is missing, 0-byte/corrupted, or built for the wrong CPU architecture (`arm64` instead of `x86_64`)
+- Wine's `winebus.sys` driver fails to initialize SDL and native HID fallback is disabled in the registry
+- `winexinput.sys` never exposes a virtual XInput gamepad to the game
+- Registry DLL overrides or duplicate HID backends interfere with input
 
-This tool automates the diagnosis and provides safe, targeted fixes.
+**Wineskin Controller Doctor** automates root-cause analysis and applies minimal, reversible fixes with full backup and rollback support.
 
 ## Requirements
 
-- macOS on Apple Silicon (ARM64)
-- Python 3.9+
-- One or more Wineskin game wrappers
+- macOS (tested on Apple Silicon ARM64 with Rosetta 2 + Sikarugir/Wineskin Wine)
+- Python 3.9+ (uses only the Python standard library — zero external pip dependencies)
+- Standard macOS CLI tools (`ioreg`, `file`, `otool`)
 
 ## Installation
 
-No installation required. Clone or copy the `wineskin-doctor` directory anywhere:
+### Option 1: Clone from GitHub
 
 ```bash
-# Option 1: Add to PATH
-ln -sf ~/wineskin-doctor/wineskin-doctor /usr/local/bin/wineskin-doctor
+git clone https://github.com/shrish-sharma-git/wineskin-doctor.git ~/wineskin-doctor
+chmod +x ~/wineskin-doctor/wineskin-doctor
 
-# Option 2: Run directly
-~/wineskin-doctor/wineskin-doctor scan
+# Optional: add to PATH
+ln -sf ~/wineskin-doctor/wineskin-doctor /usr/local/bin/wineskin-doctor
 ```
+
+### Option 2: Download a Release
+
+Download the latest `.tar.gz` archive from the [GitHub Releases](https://github.com/shrish-sharma-git/wineskin-doctor/releases) page, extract it, and run `./wineskin-doctor`.
 
 ## Usage
 
-### Scan for Wineskin wrappers
-
-```bash
-wineskin-doctor scan
-```
-
-Finds all Wineskin game wrappers in `/Applications`, `~/Applications`, `~/Desktop`, and `~/Games`.
-
-### Check controller status
-
+### 1. Check connected controllers
 ```bash
 wineskin-doctor status
 ```
+Inspects macOS `IOUSB` and `IOHIDDevice` trees to confirm your wired or Bluetooth controller is recognized by macOS.
 
-Shows which controllers macOS currently detects via USB and Bluetooth.
+### 2. Scan for Wineskin wrappers
+```bash
+wineskin-doctor scan
+```
+Searches `/Applications`, `~/Applications`, `~/Desktop`, and `~/Games` for Wineskin/Sikarugir `.app` wrappers.
 
-### Diagnose a wrapper
-
+### 3. Diagnose a wrapper (read-only)
 ```bash
 wineskin-doctor diagnose "/Applications/Alan Wake Remastered.app"
 ```
+Performs a non-destructive inspection of:
+- Wine engine binary and version
+- Wine prefix integrity
+- `libSDL2-2.0.0.dylib` existence, size, CPU architecture (`x86_64` vs `arm64`), install ID, and dependencies
+- Wine `lib/` `@rpath` symlink resolution
+- `winebus.sys` and `winebus.so` presence
+- `HKLM\System\CurrentControlSet\Services\winebus` registry keys (`Enable SDL`, `Map Controllers`, `DisableHidraw`, `DisableInput`)
+- `xinput*.dll` and `winexinput.sys` availability
+- Conflicting controller DLL overrides in `user.reg`
 
-Performs a comprehensive read-only inspection:
-- Verifies Wine engine and prefix
-- Checks SDL2 library integrity, architecture, and dependencies
-- Inspects WineBus registry configuration
-- Checks XInput and WineXInput driver availability
-- Identifies DLL override conflicts
-- Detects HID passthrough issues
-
-Produces a colour-coded report with findings and recommendations.
-
-### Repair a wrapper
-
+### 4. Repair a wrapper (interactive, with backups)
 ```bash
 wineskin-doctor repair "/Applications/Some Game.app"
 ```
-
 1. Runs full diagnostics
-2. Builds a repair plan based on the findings
-3. Shows proposed changes for your review
-4. **Asks for your explicit approval** before modifying anything
-5. Creates timestamped backups of every file before changing it
-6. Verifies the repair after applying it
+2. Builds a targeted `RepairPlan` from the findings
+3. Displays the exact proposed changes and asks for `[y/N]` confirmation
+4. Backs up every modified file inside `<Wrapper>.app/Contents/.wineskin-doctor-backups/` with a `manifest.json`
+5. Re-runs diagnostics to verify the fix
 
-### Roll back repairs
-
+### 5. Roll back repairs
 ```bash
 wineskin-doctor rollback "/Applications/Some Game.app"
 ```
-
-Restores all files to their pre-repair state using the timestamped backups stored inside the wrapper.
-
-## What It Checks
-
-| Check | Description |
-|-------|-------------|
-| Controller detection | macOS USB/Bluetooth HID recognition |
-| Wine engine | Binary presence and version |
-| Wine prefix | Prefix directory integrity |
-| SDL2 library | Existence, size, architecture (x86_64), install name, dependencies |
-| SDL2 Wine linkage | Symlinks in wine/lib for @rpath resolution |
-| WineBus driver | winebus.sys and winebus.so presence |
-| WineBus registry | Enable SDL, Map Controllers, DisableHidraw, DisableInput |
-| XInput DLLs | xinput1_3.dll, xinput1_4.dll, etc. |
-| WineXInput driver | winexinput.sys presence |
-| DLL overrides | Conflicts with controller-related DLLs |
-| HID passthrough | Potential duplicate device detection |
+Restores all backed-up files and removes any added symlinks in reverse order.
 
 ## Repair Profiles
 
-The tool selects repairs based on diagnostic evidence, not game names:
-
 | Profile | Trigger | Action |
-|---------|---------|--------|
-| SDL2 replacement | Empty/missing/wrong-arch SDL2 | Copy x86_64 SDL2 from a known donor on the system |
-| SDL2 symlinks | SDL2 present but not linked in wine/lib | Create relative symlinks |
-| WineBus SDL enable | "Enable SDL" registry value is 0 | Set to 1 in system.reg |
+| :--- | :--- | :--- |
+| **SDL2 replacement** | Missing, 0-byte, corrupted, or wrong-arch `libSDL2-2.0.0.dylib` | Copies a verified `x86_64` `libSDL2-2.0.0.dylib` from a local donor (e.g. Whisky or `/usr/local`) |
+| **SDL2 `@rpath` symlinks** | SDL2 exists in `Frameworks/` but is not linked in `SharedSupport/wine/lib/` | Creates relative symlinks (`libSDL2-2.0.0.dylib`, `libSDL2.dylib`) |
+| **WineBus SDL enable** | `"Enable SDL"` is `0` in `system.reg` | Sets `"Enable SDL"=dword:00000001` under `Services\winebus` |
 
 ## Safety Guarantees
 
-- **Never modifies without approval** — every change requires explicit confirmation
-- **Never deletes** game files, saves, prefixes, or configurations
-- **Always backs up** before modifying — timestamped copies stored in the wrapper
-- **Never installs** unsigned drivers or third-party software
-- **Never disables** macOS security protections
-- **Architecture-verified** — only copies x86_64 libraries for x86_64 Wine
-- **Rollback available** — every repair can be fully reversed
+- **Read-only by default** — `scan`, `status`, and `diagnose` never write to disk
+- **Explicit approval required** — `repair` and `rollback` always prompt `[y/N]` before modifying files
+- **Automatic timestamped backups** — stored in `<Wrapper>.app/Contents/.wineskin-doctor-backups/`
+- **Never deletes** game saves, prefixes, or executables
+- **Never installs** unsigned kernel drivers or disables macOS security protections
+- **Architecture-verified** — never copies an `arm64` library into an `x86_64` Wine wrapper
 
-## File Structure
-
-```
-wineskin-doctor/
-├── wineskin-doctor          # CLI entry point (executable)
-├── README.md                # This file
-└── doctor/
-    ├── __init__.py
-    ├── scanner.py           # Wrapper discovery and read-only inspection
-    ├── diagnoser.py         # Root-cause analysis engine
-    ├── repairer.py          # Safe repair with backup/rollback
-    ├── formatter.py         # Terminal output formatting
-    └── cli.py               # Command-line interface
-```
-
-## Backups
-
-All backups are stored inside each wrapper at:
-
-```
-<Wrapper>.app/Contents/.wineskin-doctor-backups/
-├── manifest.json
-├── libSDL2-2.0.0.dylib.<timestamp>
-├── system.reg.<timestamp>
-└── ...
-```
-
-The `manifest.json` tracks every repair action for rollback.
-
-## Example Workflow
+## Running Tests
 
 ```bash
-# 1. See what wrappers you have
-wineskin-doctor scan
-
-# 2. Check if your controller is connected
-wineskin-doctor status
-
-# 3. Diagnose a game that won't detect the controller
-wineskin-doctor diagnose "/Applications/Some Game.app"
-
-# 4. If issues found, review and apply repairs
-wineskin-doctor repair "/Applications/Some Game.app"
-
-# 5. Launch the game and test
-# 6. If something went wrong, roll back
-wineskin-doctor rollback "/Applications/Some Game.app"
+python3 -m unittest discover -s tests -v
 ```
 
-## Licence
+## Project Structure
 
-Personal use utility. No warranty.
+```text
+wineskin-doctor/
+├── wineskin-doctor          # Executable CLI entrypoint
+├── README.md                # Documentation
+├── LICENSE                  # MIT License
+├── doctor/
+│   ├── __init__.py          # Package version
+│   ├── scanner.py           # Wrapper discovery & read-only inspection
+│   ├── diagnoser.py         # Root-cause analysis engine
+│   ├── repairer.py          # Safe repair & rollback engine
+│   ├── formatter.py         # Terminal report formatting
+│   └── cli.py               # CLI command router
+└── tests/
+    └── test_doctor.py       # Unit & mock-wrapper integration tests
+```
+
+## License
+
+MIT License — see [LICENSE](LICENSE).

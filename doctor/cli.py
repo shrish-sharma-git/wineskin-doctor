@@ -12,6 +12,7 @@ Commands:
 import sys
 import os
 
+from . import __version__
 from .scanner import find_wineskin_wrappers, scan_wrapper, detect_macos_controllers
 from .diagnoser import diagnose
 from .repairer import RepairPlan, execute_repair, rollback
@@ -34,6 +35,7 @@ USAGE = """\
   wineskin-doctor repair <wrapper.app>        Fix controller issues
   wineskin-doctor rollback <wrapper.app>      Undo repairs
   wineskin-doctor status                      Show controller status
+  wineskin-doctor --version                   Show version
 
 \033[1mExamples:\033[0m
   wineskin-doctor scan
@@ -48,6 +50,10 @@ def main():
 
     if not args or args[0] in ("-h", "--help", "help"):
         print(USAGE)
+        sys.exit(0)
+
+    if args[0] in ("-v", "--version", "version"):
+        print(f"wineskin-doctor {__version__}")
         sys.exit(0)
 
     command = args[0]
